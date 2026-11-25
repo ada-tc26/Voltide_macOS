@@ -10,11 +10,14 @@ struct Peripheral: Identifiable {
     var charging: Bool?
     var state = "已连接"
 
-    var batterySymbol: String {
-        if charging == true { return "bolt.fill" }
-        guard let percent else { return "questionmark.circle" }
-        let quarter = Int((Double(percent) / 25).rounded()) * 25
-        return "battery.\(quarter)percent"
+    var deviceSymbol: String {
+        let label = name.lowercased()
+        if transport == "游戏手柄" { return "gamecontroller" }
+        if label.contains("keyboard") || label.contains("键盘") { return "keyboard" }
+        if label.contains("trackpad") { return "rectangle.and.hand.point.up.left" }
+        if label.contains("head") || label.contains("耳机") || label.contains("airpods") { return "headphones" }
+        if label.contains("mouse") || label.contains("鼠标") || id.hasPrefix("usb-") { return "computermouse" }
+        return "dot.radiowaves.left.and.right"
     }
 }
 

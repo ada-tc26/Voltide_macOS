@@ -92,20 +92,48 @@ enum Launcher {
                 print(device.name, device.percent.map { String($0) + "%" } ?? "—", device.state)
             }
         } else {
-            Voltide.main()
+            let app = NSApplication.shared
+            let delegate = MenuBarController()
+            app.delegate = delegate
+            withExtendedLifetime(delegate) { app.run() }
         }
     }
 }
 
-struct Voltide: App {
-    @StateObject private var monitor = Monitor()
+@MainActor
+final class MenuBarController: NSObject, NSApplicationDelegate {
+    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    private let popover = NSPopover()
 
-    var body: some Scene {
-        MenuBarExtra("Voltide 外设电量", systemImage: "bolt.circle") {
-            BatteryPanel(monitor: monitor)
-        }
-        .menuBarExtraStyle(.window)
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        guard let button = item.button else { return }
+        button.image = NSImage(systemSymbolName: "battery.100percent.bolt", accessibilityDescription: "Voltide 外设电量")
+        button.toolTip = "Voltide 外设电量"
+        button.target = self
+        button.action = #selector(togglePanel)
+        popover.behavior = .transient
+        let host = NSHostingController(rootView: BatteryPanel(monitor: Monitor()))
+        host.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = host
     }
+
+    @objc private func togglePanel() {
+        guard let button = item.button else { return }
+        if popover.isShown { popover.performClose(nil) }
+        else { popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY) }
+    }
+}
+
+private struct FrostedBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = .popover
+        view.blendingMode = .behindWindow
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
 struct BatteryPanel: View {
@@ -115,15 +143,14 @@ struct BatteryPanel: View {
     @State private var loginError: String?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                VStack(alignment: .leading, spacing: 3) {
-                    Text("Voltide").font(.title2.weight(.semibold))
-                    Text("外设电量").foregroundStyle(.secondary)
-                }
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                Text("外设电量").font(.system(size: 19, weight: .semibold))
                 Spacer()
-                Button { monitor.refresh() } label: { Image(systemName: "arrow.clockwise") }
-                    .buttonStyle(.glass).disabled(monitor.refreshing).help("立即刷新").accessibilityLabel("立即刷新")
+                Button { monitor.refresh() } label: {
+                    Image(systemName: "arrow.clockwise").frame(width: 28, height: 22)
+                }
+                .buttonStyle(.glass).disabled(monitor.refreshing).help("立即刷新").accessibilityLabel("立即刷新")
                 Menu {
                     Picker("刷新间隔", selection: $monitor.interval) {
                         ForEach([15, 30, 90], id: \.self) { Text("\($0) 秒").tag($0) }
@@ -135,9 +162,11 @@ struct BatteryPanel: View {
                     }
                     Divider()
                     Button("退出 Voltide") { NSApplication.shared.terminate(nil) }
-                } label: { Image(systemName: "ellipsis") }
-                .menuIndicator(.hidden).fixedSize().accessibilityLabel("更多选项").help("更多选项")
+                } label: { Image(systemName: "gearshape").frame(width: 22, height: 20) }
+                .menuStyle(.button).buttonStyle(.glass).fixedSize().accessibilityLabel("更多选项").help("更多选项")
             }
+            .padding(.bottom, 12)
+            Divider()
             if monitor.devices.isEmpty {
                 ContentUnavailableView(monitor.refreshing ? "正在读取外设" : "暂无外设电量",
                                        systemImage: "battery.0percent",
@@ -147,35 +176,31 @@ struct BatteryPanel: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         ForEach(monitor.devices) { device in
-                            HStack {
-                                VStack(alignment: .leading, spacing: 4) {
-                                    Text(device.name).font(.headline).lineLimit(2)
-                                    Text(device.transport + " · " + (device.charging == true ? "充电中" : device.state))
-                                        .font(.caption).foregroundStyle(.secondary)
-                                }
-                                Spacer()
-                                Text(device.percent.map { "\($0)%" } ?? "—")
-                                    .font(.title3.monospacedDigit()).bold()
-                                Image(systemName: device.batterySymbol)
-                                    .foregroundStyle(device.percent.map { $0 < 20 ? Color.red : $0 < 50 ? .orange : .green } ?? .secondary)
-                                    .accessibilityHidden(true)
-                            }
-                            .padding(.vertical, 10)
+                            DeviceRow(device: device)
                             if device.id != monitor.devices.last?.id { Divider() }
                         }
                     }
                 }
-                .frame(height: min(320, CGFloat(monitor.devices.count * 67)))
+                .frame(height: min(320, CGFloat(monitor.devices.count * 65) + CGFloat(monitor.devices.count - 1)))
             }
             Divider()
             if let error = loginError ?? monitor.message {
                 Text(error).font(.caption).foregroundStyle(.secondary)
-            } else if let date = monitor.updated {
-                HStack { Text("上次更新"); Text(date, style: .time) }.font(.caption).foregroundStyle(.secondary)
             }
+            HStack {
+                if let date = monitor.updated {
+                    Text("更新于 \(date.formatted(date: .omitted, time: .shortened))")
+                } else { Text("正在读取…") }
+                Spacer()
+                Text("每 \(monitor.interval) 秒")
+            }
+            .font(.caption).foregroundStyle(.secondary).padding(.top, 11)
         }
-        .padding(18).frame(width: 344)
-        .background { if reduceTransparency { Color(nsColor: .windowBackgroundColor) } else { Rectangle().fill(.regularMaterial) } }
+        .padding(16).frame(width: 344)
+        .background {
+            if reduceTransparency { Color(nsColor: .windowBackgroundColor) }
+            else { FrostedBackground() }
+        }
         .onAppear { loginStatus = SMAppService.mainApp.status; monitor.panelVisible(true) }
         .onDisappear { monitor.panelVisible(false) }
     }
@@ -186,5 +211,36 @@ struct BatteryPanel: View {
             loginError = nil
         } catch { loginError = error.localizedDescription }
         loginStatus = SMAppService.mainApp.status
+    }
+}
+
+private struct DeviceRow: View {
+    let device: Peripheral
+
+    var body: some View {
+        let level = device.percent ?? 0
+        let color: Color = device.state != "已连接" ? .secondary : level < 20 ? .red : level < 50 ? .orange : .green
+        HStack(spacing: 12) {
+            Image(systemName: device.deviceSymbol)
+                .font(.system(size: 21)).foregroundStyle(.secondary)
+                .frame(width: 32).accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(device.name).font(.headline).lineLimit(2)
+                Text(device.state != "已连接" ? device.state : device.charging == true ? "充电中" : device.transport)
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 6)
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(device.percent.map { "\($0)%" } ?? "—")
+                    .font(.system(size: 20, weight: .semibold).monospacedDigit())
+                    .foregroundStyle(device.percent == nil ? Color.secondary : color)
+                Capsule().fill(.secondary.opacity(0.22)).frame(width: 48, height: 4)
+                    .overlay(alignment: .leading) {
+                        Capsule().fill(color).frame(width: 48 * CGFloat(level) / 100)
+                    }
+            }
+        }
+        .frame(height: 65)
+        .accessibilityElement(children: .combine)
     }
 }
