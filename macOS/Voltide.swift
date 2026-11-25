@@ -108,7 +108,13 @@ final class MenuBarController: NSObject, NSApplicationDelegate, NSPopoverDelegat
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let button = item.button else { return }
-        button.image = NSImage(systemSymbolName: "battery.100percent.bolt", accessibilityDescription: "Voltide 外设电量")
+        if let url = Bundle.main.url(forResource: "Voltide", withExtension: "icns"),
+           let icon = NSImage(contentsOf: url) {
+            icon.size = NSSize(width: 18, height: 18)
+            icon.isTemplate = false
+            icon.accessibilityDescription = "Voltide 外设电量"
+            button.image = icon
+        }
         button.toolTip = "Voltide 外设电量"
         button.target = self
         button.action = #selector(togglePanel)
@@ -119,6 +125,11 @@ final class MenuBarController: NSObject, NSApplicationDelegate, NSPopoverDelegat
         popover.contentViewController = host
         popover.behavior = .transient
         popover.delegate = self
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !popover.isShown { togglePanel() }
+        return false
     }
 
     @objc private func togglePanel() {
