@@ -100,18 +100,11 @@ enum Launcher {
     }
 }
 
-private final class MenuPanel: NSPanel {
-    override var canBecomeKey: Bool { true }
-    override func cancelOperation(_ sender: Any?) { close() }
-}
-
 @MainActor
-final class MenuBarController: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class MenuBarController: NSObject, NSApplicationDelegate, NSPopoverDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
     private let monitor = Monitor()
-    private let panel = MenuPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
-                                  backing: .buffered, defer: false)
-    private var anchor = NSRect.zero
+    private let popover = NSPopover()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let button = item.button else { return }
@@ -119,82 +112,23 @@ final class MenuBarController: NSObject, NSApplicationDelegate, NSWindowDelegate
         button.toolTip = "Voltide 外设电量"
         button.target = self
         button.action = #selector(togglePanel)
-        panel.isOpaque = false
-        panel.backgroundColor = .clear
-        panel.hasShadow = true
-        panel.level = .popUpMenu
-        panel.isReleasedWhenClosed = false
-        panel.delegate = self
+
+        // Let the popover composite its own backdrop through the hosting view.
+        let host = NSHostingController(rootView: BatteryPanel(monitor: monitor))
+        host.sizingOptions = [.preferredContentSize]
+        popover.contentViewController = host
+        popover.behavior = .transient
+        popover.delegate = self
     }
 
     @objc private func togglePanel() {
-        if panel.isVisible { panel.close(); return }
-        guard let button = item.button, let window = button.window, let screen = window.screen else { return }
-        anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
-        let width: CGFloat = 344
-        let left = max(screen.frame.minX + 4, min(anchor.midX - width / 2, screen.frame.maxX - width - 4))
-        let shape = PanelOutline(tipX: anchor.midX - left)
-        let content = BatteryPanel(monitor: monitor)
-            .padding(.top, PanelOutline.tipHeight)
-            .background { PanelBackdrop(shape: shape) }
-            .onGeometryChange(for: CGSize.self, of: { $0.size }) { [weak self] size in
-                self?.position(size: size, left: left)
-            }
-        let host = NSHostingView(rootView: content.fixedSize())
-        panel.contentView = host
-        position(size: host.fittingSize, left: left)
-        panel.makeKeyAndOrderFront(nil)
-        monitor.panelVisible(true)
+        guard let button = item.button else { return }
+        if popover.isShown { popover.performClose(nil) }
+        else { popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY) }
     }
 
-    private func position(size: CGSize, left: CGFloat) {
-        guard size.width > 0, size.height > 0 else { return }
-        panel.setFrame(NSRect(x: left, y: anchor.minY - size.height, width: size.width, height: size.height),
-                       display: true)
-        panel.invalidateShadow()
-    }
-
-    func windowDidResignKey(_ notification: Notification) { panel.close() }
-    func windowWillClose(_ notification: Notification) { monitor.panelVisible(false) }
-}
-
-private struct PanelOutline: Shape {
-    static let tipHeight: CGFloat = 9
-    let tipX: CGFloat
-
-    func path(in rect: CGRect) -> Path {
-        let body = CGRect(x: 0, y: Self.tipHeight, width: rect.width, height: rect.height - Self.tipHeight)
-        let r: CGFloat = 19
-        let x = min(max(28, tipX), rect.width - 28)
-        var path = Path()
-        path.move(to: CGPoint(x: r, y: body.minY))
-        path.addLine(to: CGPoint(x: x - 11, y: body.minY))
-        path.addQuadCurve(to: CGPoint(x: x - 3, y: 2), control: CGPoint(x: x - 8, y: body.minY))
-        path.addQuadCurve(to: CGPoint(x: x + 3, y: 2), control: CGPoint(x: x, y: -1))
-        path.addQuadCurve(to: CGPoint(x: x + 11, y: body.minY), control: CGPoint(x: x + 8, y: body.minY))
-        let topRight = CGPoint(x: body.maxX, y: body.minY)
-        let bottomRight = CGPoint(x: body.maxX, y: body.maxY)
-        let bottomLeft = CGPoint(x: body.minX, y: body.maxY)
-        let topLeft = CGPoint(x: body.minX, y: body.minY)
-        path.addArc(tangent1End: topRight, tangent2End: bottomRight, radius: r)
-        path.addArc(tangent1End: bottomRight, tangent2End: bottomLeft, radius: r)
-        path.addArc(tangent1End: bottomLeft, tangent2End: topLeft, radius: r)
-        path.addArc(tangent1End: topLeft, tangent2End: topRight, radius: r)
-        path.closeSubpath()
-        return path
-    }
-}
-
-private struct PanelBackdrop: View {
-    let shape: PanelOutline
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
-
-    var body: some View {
-        if reduceTransparency { shape.fill(Color(nsColor: .windowBackgroundColor)) }
-        else {
-            shape.fill(.ultraThinMaterial)
-        }
-    }
+    func popoverWillShow(_ notification: Notification) { monitor.panelVisible(true) }
+    func popoverDidClose(_ notification: Notification) { monitor.panelVisible(false) }
 }
 
 struct BatteryPanel: View {
@@ -205,12 +139,12 @@ struct BatteryPanel: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: 8) {
-                Text("外设电量").font(.system(size: 19, weight: .semibold))
+                Text("外设电量").font(.title3.weight(.semibold))
                 Spacer()
                 Button { monitor.refresh() } label: {
-                    Image(systemName: "arrow.clockwise").frame(width: 28, height: 22)
+                    Image(systemName: "arrow.clockwise").frame(width: 18, height: 16)
                 }
-                .buttonStyle(.glass).disabled(monitor.refreshing).help("立即刷新").accessibilityLabel("立即刷新")
+                .buttonStyle(.accessoryBar).disabled(monitor.refreshing).help("立即刷新").accessibilityLabel("立即刷新")
                 Menu {
                     Picker("刷新间隔", selection: $monitor.interval) {
                         ForEach([15, 30, 90], id: \.self) { Text("\($0) 秒").tag($0) }
@@ -222,8 +156,8 @@ struct BatteryPanel: View {
                     }
                     Divider()
                     Button("退出 Voltide") { NSApplication.shared.terminate(nil) }
-                } label: { Image(systemName: "gearshape").frame(width: 22, height: 20) }
-                .menuStyle(.button).buttonStyle(.glass).fixedSize().accessibilityLabel("更多选项").help("更多选项")
+                } label: { Image(systemName: "gearshape").frame(width: 18, height: 16) }
+                .menuIndicator(.hidden).menuStyle(.button).buttonStyle(.accessoryBar).fixedSize().accessibilityLabel("更多选项").help("更多选项")
             }
             .padding(.bottom, 12)
             Divider()
@@ -287,7 +221,7 @@ private struct DeviceRow: View {
             Spacer(minLength: 6)
             VStack(alignment: .trailing, spacing: 4) {
                 Text(device.percent.map { "\($0)%" } ?? "—")
-                    .font(.system(size: 20, weight: .semibold).monospacedDigit())
+                    .font(.title3.weight(.semibold).monospacedDigit())
                     .foregroundStyle(device.percent == nil ? Color.secondary : color)
                 Capsule().fill(.secondary.opacity(0.22)).frame(width: 48, height: 4)
                     .overlay(alignment: .leading) {
