@@ -63,7 +63,18 @@ final class Monitor: ObservableObject {
             defer { refreshing = false }
             do {
                 var rows = try await Task.detached(priority: .utility) { try BatteryScanner.scan() }.value
-                rows += controllers()
+                for controller in controllers() {
+                    // GameController supplies battery telemetry but no Bluetooth address.
+                    // Combine only an unambiguous gamepad of the same advertised name.
+                    let matches = rows.indices.filter {
+                        rows[$0].transport == "蓝牙" && rows[$0].deviceSymbol == "gamecontroller" &&
+                            rows[$0].name.caseInsensitiveCompare(controller.name) == .orderedSame
+                    }
+                    if matches.count == 1, let index = matches.first {
+                        rows[index].percent = controller.percent ?? rows[index].percent
+                        rows[index].charging = controller.charging ?? rows[index].charging
+                    } else { rows.append(controller) }
+                }
                 var next: [String: Int] = [:]
                 for index in rows.indices {
                     let id = rows[index].id
@@ -87,9 +98,9 @@ enum Launcher {
     @MainActor static func main() throws {
         if CommandLine.arguments.contains("--test") {
             let devices = try BatteryScanner.scan()
-            print("HID peripherals: " + String(devices.count))
+            print("Peripherals: " + String(devices.count))
             for device in devices {
-                print(device.name, device.percent.map { String($0) + "%" } ?? "—", device.state)
+                print(device.name, device.percent.map { String($0) + "%" } ?? "—", device.statusText)
             }
         } else {
             let app = NSApplication.shared
@@ -226,7 +237,7 @@ private struct DeviceRow: View {
                 .frame(width: 32).accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 4) {
                 Text(device.name).font(.headline).lineLimit(2)
-                Text(device.state != "已连接" ? device.state : device.charging == true ? "充电中" : device.transport)
+                Text(device.statusText)
                     .font(.caption).foregroundStyle(.secondary)
             }
             Spacer(minLength: 6)

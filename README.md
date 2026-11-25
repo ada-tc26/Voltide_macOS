@@ -28,6 +28,7 @@ open dist/Voltide.app
 | macOS 采集来源 | 已实现范围 |
 |---|---|
 | IOKit 注册表 | 读取公开设备名和 `BatteryPercent` 的外设 |
+| 蓝牙 | 显示系统已连接的设备、可用的电量，以及耳机和充电盒分别上报的电量 |
 | Game Controller | 读取系统已连接且提供电池信息的手柄 |
 | HID++ 2.0 | 在罗技长报告接口上查询前四个槽位，显示首个返回有效电量的设备 |
 | 厂商 HID 报告 | 雷蛇列入适配清单的无线接收器、前行者 A5 Pro、VXE R1、ATK A9 Air 和 IMECOO P1 |
