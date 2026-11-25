@@ -12,6 +12,30 @@
   <img src="https://img.shields.io/badge/license-MIT-74dd7c" alt="License">
 </p>
 
+## macOS 菜单栏版
+
+在 macOS 27 上双击 `Voltide.app`，再点屏幕顶部菜单栏的闪电图标，即可查看外设电量、连接状态和上次更新时间。在更多选项中可设置刷新间隔、登录时启动或退出。面板采用系统背景模糊和 Liquid Glass 控件，随系统外观及“降低透明度”设置调整。
+
+在装有 Xcode 和 macOS 27 SDK 的 Mac 上，从仓库根目录构建和启动：
+
+```sh
+./macOS/build.sh
+open dist/Voltide.app
+```
+
+构建产物为当前 CPU 架构的本地签名应用。长期使用可将其拷贝到“应用程序”目录，再开启登录时启动。面板可选每 15、30 或 90 秒刷新，收起后每 5 分钟刷新。接收器仍在但读取失败时，已有电量会标注为上次读数。
+
+| macOS 采集来源 | 已实现范围 |
+|---|---|
+| IOKit 注册表 | 读取公开设备名和 `BatteryPercent` 的外设 |
+| Game Controller | 读取系统已连接且提供电池信息的手柄 |
+| HID++ 2.0 | 在罗技长报告接口上查询前四个槽位，显示首个返回有效电量的设备 |
+| 厂商 HID 报告 | 雷蛇列入适配清单的无线接收器、前行者 A5 Pro、VXE R1、ATK A9 Air 和 IMECOO P1 |
+
+可运行 `dist/Voltide.app/Contents/MacOS/Voltide --test` 单次检查 IOKit 和 HID 读数。游戏手柄通过应用事件循环读取。下方的 Windows 型号清单及实机验证记录仅适用于 Windows；macOS 厂商协议仍需按型号完成硬件复测。
+
+## Windows 托盘版
+
 一款轻量的 Windows 托盘工具，在一块面板中显示 2.4G 无线外设（键盘与鼠标）的电量，无需安装任何厂商软件。
 
 目前已内置罗技、迈丛、ROG 三家适配器。这是作者手头拥有的设备，而非工具的能力边界：适配层被设计成「支持一个新品牌 = 新增一个独立的类」。
