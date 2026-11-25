@@ -78,7 +78,7 @@ final class Monitor: ObservableObject {
                 var next: [String: Int] = [:]
                 for index in rows.indices {
                     let id = rows[index].id
-                    if rows[index].percent == nil, let last = previous[id] {
+                    if rows[index].componentLevels.isEmpty, rows[index].percent == nil, let last = previous[id] {
                         rows[index].percent = last
                         rows[index].state += " · 上次电量"
                     }
@@ -100,7 +100,9 @@ enum Launcher {
             let devices = try BatteryScanner.scan()
             print("Peripherals: " + String(devices.count))
             for device in devices {
-                print(device.name, device.percent.map { String($0) + "%" } ?? "—", device.statusText)
+                let levels = device.componentLevels.map { "\($0.label) \($0.percent)%" }
+                let values = [device.percent.map { "\($0)%" }].compactMap { $0 } + levels
+                print(device.name, values.isEmpty ? "—" : values.joined(separator: " · "), device.statusText)
             }
         } else {
             let app = NSApplication.shared
@@ -197,7 +199,7 @@ struct BatteryPanel: View {
                         }
                     }
                 }
-                .frame(height: min(320, CGFloat(monitor.devices.count * 65) + CGFloat(monitor.devices.count - 1)))
+                .frame(height: min(320, monitor.devices.reduce(CGFloat.zero) { $0 + DeviceRow.height(for: $1) } + CGFloat(monitor.devices.count - 1)))
             }
             Divider()
             if let error = loginError ?? monitor.message {
@@ -228,30 +230,67 @@ struct BatteryPanel: View {
 private struct DeviceRow: View {
     let device: Peripheral
 
+    static func height(for device: Peripheral) -> CGFloat {
+        device.componentLevels.isEmpty ? 65 : 100
+    }
+
     var body: some View {
-        let level = device.percent ?? 0
-        let color: Color = device.state != "已连接" ? .secondary : level < 20 ? .red : level < 50 ? .orange : .green
-        HStack(spacing: 12) {
-            Image(systemName: device.deviceSymbol)
-                .font(.system(size: 21)).foregroundStyle(.secondary)
-                .frame(width: 32).accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(device.name).font(.headline).lineLimit(2)
-                Text(device.statusText)
-                    .font(.caption).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 9) {
+            HStack(spacing: 12) {
+                Image(systemName: device.deviceSymbol)
+                    .font(.system(size: 21)).foregroundStyle(.secondary)
+                    .frame(width: 32).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(device.name).font(.headline).lineLimit(2)
+                    Text(device.statusText).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength: 6)
+                if device.percent != nil || device.componentLevels.isEmpty {
+                    BatteryGauge(percent: device.percent, stale: device.state != "已连接")
+                        .frame(width: 48)
+                }
             }
-            Spacer(minLength: 6)
-            VStack(alignment: .trailing, spacing: 4) {
-                Text(device.percent.map { "\($0)%" } ?? "—")
-                    .font(.title3.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(device.percent == nil ? Color.secondary : color)
-                Capsule().fill(.secondary.opacity(0.22)).frame(width: 48, height: 4)
-                    .overlay(alignment: .leading) {
-                        Capsule().fill(color).frame(width: 48 * CGFloat(level) / 100)
+            if !device.componentLevels.isEmpty {
+                HStack(spacing: 16) {
+                    ForEach(device.componentLevels, id: \.label) { component in
+                        BatteryGauge(percent: component.percent, label: component.label)
                     }
+                }
+                .padding(.leading, 44)
             }
         }
-        .frame(height: 65)
+        .frame(height: Self.height(for: device))
         .accessibilityElement(children: .combine)
+    }
+}
+
+private struct BatteryGauge: View {
+    let percent: Int?
+    var label: String? = nil
+    var stale = false
+
+    var body: some View {
+        let level = percent ?? 0
+        let color: Color = stale || percent == nil ? .secondary : level < 20 ? .red : level < 50 ? .orange : .green
+        VStack(alignment: .trailing, spacing: 4) {
+            HStack(spacing: 2) {
+                if let label {
+                    Text(label).foregroundStyle(.secondary)
+                    Spacer(minLength: 0)
+                }
+                Text(percent.map { "\($0)%" } ?? "—")
+                    .fontWeight(.semibold).monospacedDigit().foregroundStyle(color)
+            }
+            .font(label == nil ? .title3 : .caption)
+            .lineLimit(1)
+            Capsule().fill(.secondary.opacity(0.22))
+                .overlay(alignment: .leading) {
+                    GeometryReader { geometry in
+                        Capsule().fill(color).frame(width: geometry.size.width * CGFloat(level) / 100)
+                    }
+                }
+                .frame(height: 4)
+                .accessibilityHidden(true)
+        }
     }
 }

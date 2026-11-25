@@ -35,10 +35,10 @@ enum BluetoothScanner {
                     guard let id = addressID(fields["device_address"] as? String) else { continue }
                     let main = percent(fields["device_batteryLevelMain"]) ?? percent(fields["device_batteryLevelCombined"])
                     let components = [("Left", "左耳"), ("Right", "右耳"), ("Case", "充电盒")].compactMap { key, label in
-                        percent(fields["device_batteryLevel" + key]).map { (label, $0) }
+                        percent(fields["device_batteryLevel" + key]).map { ComponentLevel(label: label, percent: $0) }
                     }
                     var row = Peripheral(id: id, name: name, transport: "蓝牙", percent: main, charging: nil)
-                    row.componentLevels = components.map { "\($0.0) \($0.1)%" }.joined(separator: " · ")
+                    row.componentLevels = components
                     row.bluetoothType = fields["device_minorType"] as? String
                     rows.append(row)
                 }

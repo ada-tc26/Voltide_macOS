@@ -2,6 +2,11 @@ import Foundation
 import IOKit
 import IOKit.hid
 
+struct ComponentLevel {
+    let label: String
+    let percent: Int
+}
+
 struct Peripheral: Identifiable {
     let id: String
     let name: String
@@ -10,7 +15,7 @@ struct Peripheral: Identifiable {
     var charging: Bool?
     var state = "已连接"
 
-    var componentLevels = ""
+    var componentLevels: [ComponentLevel] = []
     var bluetoothType: String?
 
     var statusText: String {
@@ -18,7 +23,6 @@ struct Peripheral: Identifiable {
             var parts = [transport]
             if charging == true { parts.append("充电中") }
             if state != "已连接" { parts.append(state) }
-            if !componentLevels.isEmpty { parts.append(componentLevels) }
             return parts.joined(separator: " · ")
         }
         return state != "已连接" ? state : charging == true ? "充电中" : transport
