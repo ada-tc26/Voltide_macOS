@@ -102,7 +102,7 @@ enum Launcher {
 
 @MainActor
 final class MenuBarController: NSObject, NSApplicationDelegate, NSPopoverDelegate {
-    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+    private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let monitor = Monitor()
     private let popover = NSPopover()
 
@@ -112,6 +112,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate, NSPopoverDelegat
             icon.size = NSSize(width: 18, height: 18)
             icon.isTemplate = true
             icon.accessibilityDescription = "Voltide 外设电量"
+            button.imagePosition = .imageOnly
             button.image = icon
         }
         button.toolTip = "Voltide 外设电量"

@@ -23,11 +23,11 @@ func bitmap(_ pixels: Int) -> CGContext {
               bitmapInfo: CGBitmapInfo.byteOrder32Big.rawValue | CGImageAlphaInfo.premultipliedLast.rawValue)!
 }
 
-func writePNG(_ frame: CGImage, pixels: Int, artworkPixels: Int, to file: URL) {
+func writePNG(_ frame: CGImage, pixels: Int, artworkPixels: Int, verticalOffset: Int = 0, to file: URL) {
     let context = bitmap(pixels)
     let origin = CGFloat(pixels - artworkPixels) / 2
     context.interpolationQuality = .high
-    context.draw(frame, in: CGRect(x: origin, y: origin, width: CGFloat(artworkPixels), height: CGFloat(artworkPixels)))
+    context.draw(frame, in: CGRect(x: origin, y: origin + CGFloat(verticalOffset), width: CGFloat(artworkPixels), height: CGFloat(artworkPixels)))
     guard let destination = CGImageDestinationCreateWithURL(file as CFURL, "public.png" as CFString, 1, nil)
     else { fatalError("Cannot create " + file.path) }
     CGImageDestinationAddImage(destination, context.makeImage()!, nil)
@@ -63,5 +63,6 @@ for pixel in stride(from: 0, to: largest * largest * 4, by: 4) {
 for scale in [1, 2] {
     let suffix = scale == 2 ? "@2x" : ""
     let file = resources.appendingPathComponent("MenuBarTemplate\(suffix).png")
-    writePNG(mask.makeImage()!, pixels: 18 * scale, artworkPixels: 16 * scale, to: file)
+    // The wide upper stroke puts the ink center one point above the canvas center.
+    writePNG(mask.makeImage()!, pixels: 18 * scale, artworkPixels: 16 * scale, verticalOffset: -scale, to: file)
 }
