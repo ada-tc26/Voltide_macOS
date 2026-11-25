@@ -4,7 +4,7 @@ cd "$(dirname "$0")/.."
 app=dist/Voltide.app
 iconset=dist/Voltide.iconset
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$iconset" dist/ModuleCache
-xcrun swift -module-cache-path dist/ModuleCache macOS/tools/make-icon.swift app.ico "$iconset"
+xcrun swift -module-cache-path dist/ModuleCache macOS/tools/make-icon.swift app.ico "$iconset" "$app/Contents/Resources"
 iconutil -c icns "$iconset" -o "$app/Contents/Resources/Voltide.icns"
 xcrun swiftc -O -parse-as-library -module-cache-path dist/ModuleCache \
     -target "$(uname -m)-apple-macos27.0" macOS/*.swift -o "$app/Contents/MacOS/Voltide"

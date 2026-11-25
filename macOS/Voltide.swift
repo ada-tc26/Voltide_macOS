@@ -108,10 +108,9 @@ final class MenuBarController: NSObject, NSApplicationDelegate, NSPopoverDelegat
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let button = item.button else { return }
-        if let url = Bundle.main.url(forResource: "Voltide", withExtension: "icns"),
-           let icon = NSImage(contentsOf: url) {
+        if let icon = NSImage(named: "MenuBarTemplate") {
             icon.size = NSSize(width: 18, height: 18)
-            icon.isTemplate = false
+            icon.isTemplate = true
             icon.accessibilityDescription = "Voltide 外设电量"
             button.image = icon
         }
