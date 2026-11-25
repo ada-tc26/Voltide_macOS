@@ -100,10 +100,18 @@ enum Launcher {
     }
 }
 
+private final class MenuPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override func cancelOperation(_ sender: Any?) { close() }
+}
+
 @MainActor
-final class MenuBarController: NSObject, NSApplicationDelegate {
+final class MenuBarController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-    private let popover = NSPopover()
+    private let monitor = Monitor()
+    private let panel = MenuPanel(contentRect: .zero, styleMask: [.borderless, .nonactivatingPanel],
+                                  backing: .buffered, defer: false)
+    private var anchor = NSRect.zero
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let button = item.button else { return }
@@ -111,34 +119,86 @@ final class MenuBarController: NSObject, NSApplicationDelegate {
         button.toolTip = "Voltide 外设电量"
         button.target = self
         button.action = #selector(togglePanel)
-        popover.behavior = .transient
-        let host = NSHostingController(rootView: BatteryPanel(monitor: Monitor()))
-        host.sizingOptions = [.preferredContentSize]
-        popover.contentViewController = host
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
+        panel.hasShadow = true
+        panel.level = .popUpMenu
+        panel.isReleasedWhenClosed = false
+        panel.delegate = self
     }
 
     @objc private func togglePanel() {
-        guard let button = item.button else { return }
-        if popover.isShown { popover.performClose(nil) }
-        else { popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY) }
+        if panel.isVisible { panel.close(); return }
+        guard let button = item.button, let window = button.window, let screen = window.screen else { return }
+        anchor = window.convertToScreen(button.convert(button.bounds, to: nil))
+        let width: CGFloat = 344
+        let left = max(screen.frame.minX + 4, min(anchor.midX - width / 2, screen.frame.maxX - width - 4))
+        let shape = PanelOutline(tipX: anchor.midX - left)
+        let content = BatteryPanel(monitor: monitor)
+            .padding(.top, PanelOutline.tipHeight)
+            .background { PanelBackdrop(shape: shape) }
+            .onGeometryChange(for: CGSize.self, of: { $0.size }) { [weak self] size in
+                self?.position(size: size, left: left)
+            }
+        let host = NSHostingView(rootView: content.fixedSize())
+        panel.contentView = host
+        position(size: host.fittingSize, left: left)
+        panel.makeKeyAndOrderFront(nil)
+        monitor.panelVisible(true)
+    }
+
+    private func position(size: CGSize, left: CGFloat) {
+        guard size.width > 0, size.height > 0 else { return }
+        panel.setFrame(NSRect(x: left, y: anchor.minY - size.height, width: size.width, height: size.height),
+                       display: true)
+        panel.invalidateShadow()
+    }
+
+    func windowDidResignKey(_ notification: Notification) { panel.close() }
+    func windowWillClose(_ notification: Notification) { monitor.panelVisible(false) }
+}
+
+private struct PanelOutline: Shape {
+    static let tipHeight: CGFloat = 9
+    let tipX: CGFloat
+
+    func path(in rect: CGRect) -> Path {
+        let body = CGRect(x: 0, y: Self.tipHeight, width: rect.width, height: rect.height - Self.tipHeight)
+        let r: CGFloat = 19
+        let x = min(max(28, tipX), rect.width - 28)
+        var path = Path()
+        path.move(to: CGPoint(x: r, y: body.minY))
+        path.addLine(to: CGPoint(x: x - 11, y: body.minY))
+        path.addQuadCurve(to: CGPoint(x: x - 3, y: 2), control: CGPoint(x: x - 8, y: body.minY))
+        path.addQuadCurve(to: CGPoint(x: x + 3, y: 2), control: CGPoint(x: x, y: -1))
+        path.addQuadCurve(to: CGPoint(x: x + 11, y: body.minY), control: CGPoint(x: x + 8, y: body.minY))
+        let topRight = CGPoint(x: body.maxX, y: body.minY)
+        let bottomRight = CGPoint(x: body.maxX, y: body.maxY)
+        let bottomLeft = CGPoint(x: body.minX, y: body.maxY)
+        let topLeft = CGPoint(x: body.minX, y: body.minY)
+        path.addArc(tangent1End: topRight, tangent2End: bottomRight, radius: r)
+        path.addArc(tangent1End: bottomRight, tangent2End: bottomLeft, radius: r)
+        path.addArc(tangent1End: bottomLeft, tangent2End: topLeft, radius: r)
+        path.addArc(tangent1End: topLeft, tangent2End: topRight, radius: r)
+        path.closeSubpath()
+        return path
     }
 }
 
-private struct FrostedBackground: NSViewRepresentable {
-    func makeNSView(context: Context) -> NSVisualEffectView {
-        let view = NSVisualEffectView()
-        view.material = .popover
-        view.blendingMode = .behindWindow
-        view.state = .active
-        return view
-    }
+private struct PanelBackdrop: View {
+    let shape: PanelOutline
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
-    func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
+    var body: some View {
+        if reduceTransparency { shape.fill(Color(nsColor: .windowBackgroundColor)) }
+        else {
+            shape.fill(.ultraThinMaterial)
+        }
+    }
 }
 
 struct BatteryPanel: View {
     @ObservedObject var monitor: Monitor
-    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
     @State private var loginStatus = SMAppService.mainApp.status
     @State private var loginError: String?
 
@@ -197,12 +257,7 @@ struct BatteryPanel: View {
             .font(.caption).foregroundStyle(.secondary).padding(.top, 11)
         }
         .padding(16).frame(width: 344)
-        .background {
-            if reduceTransparency { Color(nsColor: .windowBackgroundColor) }
-            else { FrostedBackground() }
-        }
-        .onAppear { loginStatus = SMAppService.mainApp.status; monitor.panelVisible(true) }
-        .onDisappear { monitor.panelVisible(false) }
+        .onAppear { loginStatus = SMAppService.mainApp.status }
     }
 
     private func setLogin(_ enabled: Bool) {
