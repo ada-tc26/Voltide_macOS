@@ -3,6 +3,11 @@ import Foundation
 @main
 enum ReadingTests {
     static func main() throws {
+        let utc = TimeZone(secondsFromGMT: 0)!
+        for (minutes, expected) in [(0, "00:00"), (7, "00:07"), (543, "09:03"), (1439, "23:59")] {
+            let date = Date(timeIntervalSince1970: Double(minutes * 60))
+            precondition(panelTime(date, timeZone: utc) == expected)
+        }
         let start = Date(timeIntervalSince1970: 1000)
         var history = ReadingHistory()
         var headset = Peripheral(id: "bluetooth-1", name: "耳机", transport: "蓝牙", percent: 70)

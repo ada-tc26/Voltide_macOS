@@ -217,7 +217,7 @@ struct BatteryPanel: View {
             }
             HStack {
                 if let date = monitor.updated {
-                    Text("刷新于 \(date.formatted(date: .omitted, time: .shortened))")
+                    Text("刷新于 \(panelTime(date))")
                 } else { Text("正在读取…") }
                 Spacer()
                 Text("每 \(monitor.interval) 秒")
@@ -330,7 +330,7 @@ private struct BatteryGauge: View {
                 .frame(height: 4)
                 .accessibilityHidden(true)
             if let readAt {
-                Text((stale ? "上次 " : "") + readAt.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute()))
+                Text((stale ? "上次 " : "") + panelTime(readAt))
                     .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
                     .help("最后成功读取：" + readAt.formatted())
             }

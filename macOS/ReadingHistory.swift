@@ -1,5 +1,11 @@
 import Foundation
 
+func panelTime(_ date: Date, timeZone: TimeZone = .autoupdatingCurrent) -> String {
+    let format: Date.FormatString = "\(hour: .twoDigits(clock: .twentyFourHour, hourCycle: .zeroBased)):\(minute: .twoDigits)"
+    return date.formatted(.verbatim(format, locale: Locale(identifier: "en_US_POSIX"),
+                                    timeZone: timeZone, calendar: Calendar(identifier: .gregorian)))
+}
+
 enum ScanSource: String, CaseIterable {
     case registry = "系统 HID", bluetooth = "蓝牙", receiver = "接收器", controller = "手柄"
 }
