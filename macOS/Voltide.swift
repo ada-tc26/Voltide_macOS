@@ -128,6 +128,7 @@ final class MenuBarController: NSObject, NSApplicationDelegate, NSPopoverDelegat
     private let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let monitor = Monitor()
     private let popover = NSPopover()
+    private var outsideClicks: Any?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let button = item.button else { return }
@@ -158,11 +159,43 @@ final class MenuBarController: NSObject, NSApplicationDelegate, NSPopoverDelegat
     @objc private func togglePanel() {
         guard let button = item.button else { return }
         if popover.isShown { popover.performClose(nil) }
-        else { popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY) }
+        else {
+            // A menu-bar agent can show a popover while the previous app still owns focus.
+            NSApp.activate()
+            popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            popover.contentViewController?.view.window?.makeKey()
+        }
     }
 
-    func popoverWillShow(_ notification: Notification) { monitor.panelVisible(true) }
-    func popoverDidClose(_ notification: Notification) { monitor.panelVisible(false) }
+    func applicationDidResignActive(_ notification: Notification) {
+        if popover.isShown { popover.close() }
+    }
+
+    func popoverWillShow(_ notification: Notification) {
+        monitor.panelVisible(true)
+        NSWorkspace.shared.notificationCenter.addObserver(self, selector: #selector(frontAppChanged),
+            name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        // A click in an already-frontmost app may produce no activation notification.
+        outsideClicks = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown, .otherMouseDown]) { [weak self] _ in
+            guard let self else { return }
+            if let button = item.button, let window = button.window,
+               window.convertToScreen(button.convert(button.bounds, to: nil)).contains(NSEvent.mouseLocation) { return }
+            popover.close()
+        }
+    }
+
+    @objc private func frontAppChanged(_ notification: Notification) {
+        guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication,
+              app.processIdentifier != ProcessInfo.processInfo.processIdentifier else { return }
+        popover.close()
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        if let outsideClicks { NSEvent.removeMonitor(outsideClicks) }
+        outsideClicks = nil
+        NSWorkspace.shared.notificationCenter.removeObserver(self, name: NSWorkspace.didActivateApplicationNotification, object: nil)
+        monitor.panelVisible(false)
+    }
 }
 
 struct BatteryPanel: View {
