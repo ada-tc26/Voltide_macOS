@@ -13,7 +13,14 @@ final class Monitor: ObservableObject {
     }
     private var visible = false
     private var timer: Timer?
-    private var previous: [String: Int] = [:]
+    private var history = ReadingHistory()
+    @Published private(set) var aliases = UserDefaults.standard.dictionary(forKey: "deviceAliases") as? [String: String] ?? [:]
+
+    func setAlias(_ value: String, for key: String) {
+        let name = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        aliases[key] = name.isEmpty ? nil : String(name.prefix(80))
+        UserDefaults.standard.set(aliases, forKey: "deviceAliases")
+    }
     private var controllerIDs: [ObjectIdentifier: UUID] = [:]
 
     init() {
@@ -50,9 +57,12 @@ final class Monitor: ObservableObject {
             let id = controllerIDs[key] ?? UUID()
             controllerIDs[key] = id
             let level = battery.batteryLevel
-            return Peripheral(id: id.uuidString, name: pad.vendorName ?? "游戏手柄", transport: "游戏手柄",
+            var row = Peripheral(id: id.uuidString, name: pad.vendorName ?? "游戏手柄", transport: "游戏手柄",
                               percent: (0...1).contains(level) ? Int((level * 100).rounded()) : nil,
                               charging: battery.batteryState == .unknown ? nil : battery.batteryState == .charging)
+            let peers = connected.filter { $0.vendorName == pad.vendorName && $0.productCategory == pad.productCategory }
+            if peers.count == 1 { row.aliasKey = "controller-\(pad.productCategory)-\(row.name)" }
+            return row
         }
     }
 
@@ -61,34 +71,28 @@ final class Monitor: ObservableObject {
         refreshing = true
         Task {
             defer { refreshing = false }
-            do {
-                var rows = try await Task.detached(priority: .utility) { try BatteryScanner.scan() }.value
-                for controller in controllers() {
-                    // GameController supplies battery telemetry but no Bluetooth address.
-                    // Combine only an unambiguous gamepad of the same advertised name.
-                    let matches = rows.indices.filter {
-                        rows[$0].transport == "蓝牙" && rows[$0].deviceSymbol == "gamecontroller" &&
-                            rows[$0].name.caseInsensitiveCompare(controller.name) == .orderedSame
-                    }
-                    if matches.count == 1, let index = matches.first {
-                        rows[index].percent = controller.percent ?? rows[index].percent
-                        rows[index].charging = controller.charging ?? rows[index].charging
-                    } else { rows.append(controller) }
+            let batches = await Task.detached(priority: .utility) { BatteryScanner.scan() }.value
+            for batch in batches { history.apply(batch) }
+            // Use fresh Bluetooth identities when the controller API reports the same pad.
+            let bluetooth = batches.first { $0.source == .bluetooth }?.rows ?? []
+            let pads = controllers()
+            history.apply(ScanBatch(.controller) {
+                pads.map { pad in
+                    let matches = bluetooth.filter { $0.deviceSymbol == "gamecontroller" &&
+                        $0.name.caseInsensitiveCompare(pad.name) == .orderedSame }
+                    guard matches.count == 1, pads.filter({ $0.name == pad.name }).count == 1 else { return pad }
+                    var row = matches[0]
+                    row.componentLevels = []
+                    row.percent = pad.percent
+                    row.charging = pad.charging
+                    return row
                 }
-                var next: [String: Int] = [:]
-                for index in rows.indices {
-                    let id = rows[index].id
-                    if rows[index].componentLevels.isEmpty, rows[index].percent == nil, let last = previous[id] {
-                        rows[index].percent = last
-                        rows[index].state += " · 上次电量"
-                    }
-                    next[id] = rows[index].percent
-                }
-                previous = next
-                devices = rows
-                updated = Date()
-                message = nil
-            } catch { message = "刷新失败 · " + error.localizedDescription }
+            })
+            devices = history.devices
+            updated = Date()
+            let failures = batches.filter { $0.rows == nil }.map { $0.source.rawValue }
+            message = failures.isEmpty ? nil : failures.joined(separator: "、") + "采集失败"
+
         }
     }
 }
@@ -97,7 +101,13 @@ final class Monitor: ObservableObject {
 enum Launcher {
     @MainActor static func main() throws {
         if CommandLine.arguments.contains("--test") {
-            let devices = try BatteryScanner.scan()
+            let batches = BatteryScanner.scan()
+            var history = ReadingHistory()
+            for batch in batches {
+                history.apply(batch)
+                if batch.rows == nil { print(batch.source.rawValue + "采集失败") }
+            }
+            let devices = history.devices
             print("Peripherals: " + String(devices.count))
             for device in devices {
                 let levels = device.componentLevels.map { "\($0.label) \($0.percent)%" }
@@ -194,7 +204,7 @@ struct BatteryPanel: View {
                 ScrollView {
                     VStack(spacing: 0) {
                         ForEach(monitor.devices) { device in
-                            DeviceRow(device: device)
+                            DeviceRow(device: device, monitor: monitor)
                             if device.id != monitor.devices.last?.id { Divider() }
                         }
                     }
@@ -207,7 +217,7 @@ struct BatteryPanel: View {
             }
             HStack {
                 if let date = monitor.updated {
-                    Text("更新于 \(date.formatted(date: .omitted, time: .shortened))")
+                    Text("刷新于 \(date.formatted(date: .omitted, time: .shortened))")
                 } else { Text("正在读取…") }
                 Spacer()
                 Text("每 \(monitor.interval) 秒")
@@ -230,8 +240,18 @@ struct BatteryPanel: View {
 private struct DeviceRow: View {
     let device: Peripheral
 
+    @ObservedObject var monitor: Monitor
+    @State private var editing = false
+    @State private var draft = ""
+
+    private var aliasKey: String { device.aliasKey ?? device.id }
+    private func editAlias() {
+        draft = monitor.aliases[aliasKey] ?? ""
+        editing = true
+    }
+
     static func height(for device: Peripheral) -> CGFloat {
-        device.componentLevels.isEmpty ? 65 : 100
+        device.componentLevels.isEmpty ? 70 : 115
     }
 
     var body: some View {
@@ -241,32 +261,50 @@ private struct DeviceRow: View {
                     .font(.system(size: 21)).foregroundStyle(.secondary)
                     .frame(width: 32).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
-                    Text(device.name).font(.headline).lineLimit(2)
+                    Button(action: editAlias) {
+                        Text(monitor.aliases[aliasKey] ?? device.name).font(.headline).lineLimit(2)
+                    }
+                    .buttonStyle(.plain).help("编辑设备别名 · " + device.name)
+                    .popover(isPresented: $editing) {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Text("设备别名").font(.headline)
+                            Text(device.name).font(.caption).foregroundStyle(.secondary)
+                            TextField("使用原名", text: $draft)
+                                .onSubmit { monitor.setAlias(draft, for: aliasKey); editing = false }
+                            HStack {
+                                Button("恢复原名") { monitor.setAlias("", for: aliasKey); editing = false }
+                                Spacer()
+                                Button("保存") { monitor.setAlias(draft, for: aliasKey); editing = false }
+                            }
+                        }.padding().frame(width: 240)
+                    }
                     Text(device.statusText).font(.caption).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 6)
                 if device.percent != nil || device.componentLevels.isEmpty {
-                    BatteryGauge(percent: device.percent, stale: device.state != "已连接")
-                        .frame(width: 48)
+                    BatteryGauge(percent: device.percent, readAt: device.readAt, stale: device.stale)
+                        .frame(width: device.stale ? 86 : 54)
                 }
             }
             if !device.componentLevels.isEmpty {
                 HStack(spacing: 16) {
                     ForEach(device.componentLevels, id: \.label) { component in
-                        BatteryGauge(percent: component.percent, label: component.label)
+                        BatteryGauge(percent: component.percent, label: component.label, readAt: component.readAt, stale: component.stale)
                     }
                 }
                 .padding(.leading, 44)
             }
         }
         .frame(height: Self.height(for: device))
-        .accessibilityElement(children: .combine)
+        .contextMenu { Button("编辑设备别名", action: editAlias) }
+        .accessibilityElement(children: .contain)
     }
 }
 
 private struct BatteryGauge: View {
     let percent: Int?
     var label: String? = nil
+    var readAt: Date?
     var stale = false
 
     var body: some View {
@@ -291,6 +329,11 @@ private struct BatteryGauge: View {
                 }
                 .frame(height: 4)
                 .accessibilityHidden(true)
+            if let readAt {
+                Text((stale ? "上次 " : "") + readAt.formatted(.dateTime.hour(.twoDigits(amPM: .omitted)).minute()))
+                    .font(.system(size: 10).monospacedDigit()).foregroundStyle(.secondary)
+                    .help("最后成功读取：" + readAt.formatted())
+            }
         }
     }
 }

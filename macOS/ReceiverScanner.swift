@@ -9,13 +9,15 @@ enum ReceiverScanner {
         0x00B4, 0x00B8, 0x00B9, 0x00B3, 0x009A, 0x005A, 0x0045
     ]
 
-    static func scan() -> [Peripheral] {
+    static func scan() throws -> [Peripheral] {
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, 0)
         let matches = [[kIOHIDVendorIDKey: 0x1532], [kIOHIDVendorIDKey: 0x046D],
                        [kIOHIDVendorIDKey: 0x373B], [kIOHIDVendorIDKey: 0x3554, kIOHIDProductIDKey: 0xFB34],
                        [kIOHIDVendorIDKey: 0x258A, kIOHIDProductIDKey: 0x0138]]
         IOHIDManagerSetDeviceMatchingMultiple(manager, matches as CFArray)
-        guard let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice> else { return [] }
+        // IOKit returns nil when there are no matching devices.
+        guard let matching = IOHIDManagerCopyDevices(manager) else { return [] }
+        guard let devices = matching as? Set<IOHIDDevice> else { throw CocoaError(.fileReadUnknown) }
         var found: [String: Peripheral] = [:]
         for device in devices {
             func property(_ key: String) -> Any? { IOHIDDeviceGetProperty(device, key as CFString) }
@@ -38,6 +40,10 @@ enum ReceiverScanner {
             let name = compxModels[pid] ?? property(kIOHIDProductKey) as? String ?? (razer ? "Razer" : eweadn ? "EWEADN A5 Pro" : "Logitech")
             var row = Peripheral(id: id, name: name,
                                  transport: "2.4 GHz", state: "暂未收到读数")
+            if let serial = property(kIOHIDSerialNumberKey) as? String, !serial.isEmpty,
+               serial.contains(where: { $0 != "0" }) {
+                row.aliasKey = "receiver-\(vid)-\(pid)-\(serial)"
+            }
             if IOHIDDeviceOpen(device, 0) == kIOReturnSuccess {
                 defer { IOHIDDeviceClose(device, 0) }
                 if razer { readRazer(device, into: &row) }
@@ -59,6 +65,9 @@ enum ReceiverScanner {
         return data
     }
 
+    // OpenRazer charge_level: class 0x07, command 0x80 reports a full-scale byte.
+    static func razerPercent(_ raw: UInt8) -> Int { (Int(raw) * 100 + 127) / 255 }
+
     private static func readRazer(_ device: IOHIDDevice, into row: inout Peripheral) {
         var query = [UInt8](repeating: 0, count: 90)
         query[1] = UInt8.random(in: 0x20...0xEF)
@@ -71,8 +80,7 @@ enum ReceiverScanner {
                   data[6] == 7, data[7] == 0x80 else { continue }
             if data[0] == 4 { row.state = "设备未应答"; return }
             guard data[0] == 2, data[5] >= 2 else { continue }
-            let raw = Int(data[9])
-            row.percent = raw <= 100 ? raw : Int((Double(raw) * 100 / 255).rounded())
+            row.percent = razerPercent(data[9])
             row.charging = data[8] != 0
             row.state = "已连接"
             return

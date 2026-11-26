@@ -5,6 +5,8 @@ import IOKit.hid
 struct ComponentLevel {
     let label: String
     let percent: Int
+    var readAt: Date?
+    var stale = false
 }
 
 struct Peripheral: Identifiable {
@@ -17,6 +19,10 @@ struct Peripheral: Identifiable {
 
     var componentLevels: [ComponentLevel] = []
     var bluetoothType: String?
+    var readAt: Date?
+    var lastSeen: Date?
+    var stale = false
+    var aliasKey: String?
 
     var statusText: String {
         if transport == "蓝牙" {
@@ -40,7 +46,12 @@ struct Peripheral: Identifiable {
 }
 
 enum BatteryScanner {
-    static func scan() throws -> [Peripheral] {
+    static func scan() -> [ScanBatch] {
+        [ScanBatch(.registry, read: registry), ScanBatch(.bluetooth, read: BluetoothScanner.scan),
+         ScanBatch(.receiver, read: ReceiverScanner.scan)]
+    }
+
+    private static func registry() throws -> [Peripheral] {
         var iterator: io_iterator_t = 0
         let match = ["IOPropertyExistsMatch": "BatteryPercent"] as CFDictionary
         let status = IOServiceGetMatchingServices(kIOMainPortDefault, match, &iterator)
@@ -64,15 +75,10 @@ enum BatteryScanner {
                 ?? "registry-\(entryID)"
             devices[id] = Peripheral(id: id, name: name, transport: isBluetooth || id.hasPrefix("bluetooth-") ? "蓝牙" : transport,
                                      percent: level, charging: property("IsCharging") as? Bool)
-        }
-        for var row in BluetoothScanner.scan() {
-            if let existing = devices[row.id] {
-                row.percent = row.percent ?? existing.percent
-                row.charging = existing.charging
+            if let serial = property("SerialNumber") as? String, !serial.isEmpty, !id.hasPrefix("bluetooth-") {
+                devices[id]?.aliasKey = "hid-\(property("VendorID") as? Int ?? 0)-\(name)-\(serial)"
             }
-            devices[row.id] = row
         }
-        for receiver in ReceiverScanner.scan() { devices[receiver.id] = receiver }
         return devices.values.sorted { ($0.name, $0.id) < ($1.name, $1.id) }
     }
 }

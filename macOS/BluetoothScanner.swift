@@ -3,18 +3,18 @@ import Foundation
 enum BluetoothScanner {
     // Read the same connected-device inventory macOS exposes in System Information.
     // This does not start discovery or initiate a connection to a sleeping device.
-    static func scan() -> [Peripheral] {
+    static func scan() throws -> [Peripheral] {
         let process = Process()
         let output = Pipe()
         process.executableURL = URL(fileURLWithPath: "/usr/sbin/system_profiler")
         process.arguments = ["-json", "-timeout", "8", "SPBluetoothDataType"]
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
-        do { try process.run() } catch { return [] }
+        try process.run()
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
-        guard process.terminationStatus == 0 else { return [] }
-        return devices(in: data)
+        guard process.terminationStatus == 0 else { throw CocoaError(.fileReadUnknown) }
+        return try devices(in: data)
     }
 
     static func addressID(_ address: String?) -> String? {
@@ -24,15 +24,21 @@ enum BluetoothScanner {
         return "bluetooth-" + digits
     }
 
-    static func devices(in data: Data) -> [Peripheral] {
-        guard let report = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let controllers = report["SPBluetoothDataType"] as? [[String: Any]] else { return [] }
+    static func devices(in data: Data) throws -> [Peripheral] {
+        guard let report = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let controllers = report["SPBluetoothDataType"] as? [[String: Any]] else { throw CocoaError(.fileReadCorruptFile) }
         var rows: [Peripheral] = []
         for controller in controllers {
-            let connected = controller["device_connected"] as? [[String: [String: Any]]] ?? []
+            guard let raw = controller["device_connected"] else {
+                guard controller["controller_properties"] != nil || controller["device_not_connected"] != nil else {
+                    throw CocoaError(.fileReadCorruptFile)
+                }
+                continue
+            }
+            guard let connected = raw as? [[String: [String: Any]]] else { throw CocoaError(.fileReadCorruptFile) }
             for entry in connected {
                 for (name, fields) in entry {
-                    guard let id = addressID(fields["device_address"] as? String) else { continue }
+                    guard let id = addressID(fields["device_address"] as? String) else { throw CocoaError(.fileReadCorruptFile) }
                     let main = percent(fields["device_batteryLevelMain"]) ?? percent(fields["device_batteryLevelCombined"])
                     let components = [("Left", "左耳"), ("Right", "右耳"), ("Case", "充电盒")].compactMap { key, label in
                         percent(fields["device_batteryLevel" + key]).map { ComponentLevel(label: label, percent: $0) }
