@@ -44,6 +44,7 @@ struct ReadingHistory {
                 row.readAt = batch.time
                 row.stale = false
             } else if let old, let date = old.readAt, batch.time.timeIntervalSince(date) < Self.lifetime {
+                if batch.source == .receiver, row.state != "已连接" { row.name = old.name }
                 row.percent = old.percent
                 row.readAt = date
                 row.stale = true

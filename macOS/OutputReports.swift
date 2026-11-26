@@ -53,6 +53,20 @@ final class OutputReports {
         row.state = "已连接"
     }
 
+    // HID++ Device Name (0x0005) supplies a byte count followed by UTF-8 fragments.
+    // Decode only after collecting all bytes: a character may span two reports.
+    static func deviceName(length: Int, fragment: (UInt8) -> ArraySlice<UInt8>?) -> String? {
+        guard (1...255).contains(length) else { return nil }
+        var bytes: [UInt8] = []
+        while bytes.count < length {
+            guard let part = fragment(UInt8(bytes.count)), !part.isEmpty else { return nil }
+            bytes.append(contentsOf: part.prefix(length - bytes.count))
+        }
+        guard let name = String(bytes: bytes, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !name.isEmpty, name.rangeOfCharacter(from: .controlCharacters) == nil else { return nil }
+        return name
+    }
+
     func readLogitech(into row: inout Peripheral) {
         for slot: UInt8 in 1...4 {
             func call(feature: UInt8, function: UInt8, parameters: [UInt8] = []) -> [UInt8]? {
@@ -74,6 +88,13 @@ final class OutputReports {
             row.percent = Int(result[4])
             row.charging = result[5] & 1 != 0
             row.state = "已连接"
+            if let index = call(feature: 0, function: 0, parameters: [0, 5])?[4], index != 0,
+               let count = call(feature: index, function: 0)?[4],
+               let name = Self.deviceName(length: Int(count), fragment: { offset in
+                   call(feature: index, function: 1, parameters: [offset])?.dropFirst(4)
+               }) {
+                row.name = name
+            }
             return
         }
     }

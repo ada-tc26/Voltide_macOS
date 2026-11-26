@@ -11,7 +11,7 @@ struct ComponentLevel {
 
 struct Peripheral: Identifiable {
     let id: String
-    let name: String
+    var name: String
     let transport: String
     var percent: Int?
     var charging: Bool?

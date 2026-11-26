@@ -36,6 +36,12 @@ enum ReadingTests {
             do { _ = try BluetoothScanner.devices(in: Data(malformed.utf8)); fatalError("Malformed report accepted") }
             catch {}
         }
+        let product = Array("PRO X Wireless 鼠标".utf8)
+        let decoded = OutputReports.deviceName(length: product.count) { offset in
+            product.dropFirst(Int(offset)).prefix(16)
+        }
+        precondition(decoded == "PRO X Wireless 鼠标")
+        precondition(OutputReports.deviceName(length: 20) { _ in nil } == nil)
         let levels = (0...255).map { ReceiverScanner.razerPercent(UInt8($0)) }
         precondition(levels == levels.sorted())
         precondition([levels[0], levels[100], levels[101], levels[255]] == [0, 39, 40, 100])
